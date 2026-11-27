@@ -198,7 +198,7 @@ frames=[
  (0.30,"3. EN ROUTE","Riding along the highway",dict(jeep_on=True)),
  (0.55,"4. LANDMARK","River crossing (placeholder landmark)",dict(jeep_on=True,extra="bridge")),
  (0.88,"5. ALMOST THERE","SM Molino ahead",dict(jeep_on=True)),
- (1.00,"6. DROP-OFF","SM Molino - you made it!",dict(you=(58,170),extra="back")),
+ (1.00,"6. DROP-OFF","SM Molino - you made it!",dict(you=(70,176),extra="back")),
 ]
 ims=[]
 for i,(s,t,sub,kw) in enumerate(frames):
@@ -206,3 +206,19 @@ for i,(s,t,sub,kw) in enumerate(frames):
 sheet=Image.new("RGB",(6*370+10,660),(30,30,44))
 for i,im in enumerate(ims): sheet.paste(im.resize((360,640)),(10+i*370,10))
 sheet.save(f"{OUT}/contact_sheet.png"); print("real roads:",real)
+
+# ---- animated preview (camera follows jeepney along the route) ----
+if len(sys.argv)>2 and sys.argv[2]=="video":
+    import subprocess
+    N=150
+    p=subprocess.Popen(["ffmpeg","-y","-loglevel","error","-f","rawvideo","-pix_fmt","rgb24","-s",f"{LW*SC}x{LH*SC}","-r","15","-i","-",
+        "-c:v","libx264","-pix_fmt","yuv420p","-crf","20",f"{OUT}/commute_preview.mp4"],stdin=subprocess.PIPE)
+    for k in range(N):
+        u=k/(N-1); ss=min(1,u/0.9)
+        if u<0.1: img=scene(0,"","",you=(55,150)); sg=0
+        else: sg=(u-0.1)/0.8; sg=min(1,sg)
+        if u>=0.1 and u<=0.9: img=scene(sg,"","",jeep_on=True,extra="bridge" if abs(sg-.55)<.12 else None)
+        elif u>0.9: img=scene(1.0,"","",you=(70,176),extra="back")
+        im=hud(img,"COMMUTE PREVIEW","Imus district  ->  SM Molino",int(u*5),6)
+        p.stdin.write(im.convert("RGB").tobytes())
+    p.stdin.close(); p.wait(); print("video done")
