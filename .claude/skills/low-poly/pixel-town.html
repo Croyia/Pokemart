@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<style>
+@font-face{font-family:'Pix';src:url(fonts/PixelifySans-700-normal.woff2) format('woff2')}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1080px;height:1920px;overflow:hidden;background:#2a62b8}
+#root{position:relative;width:1080px;height:1920px;overflow:hidden}
+#c{position:absolute;left:0;top:0;width:1080px;height:1920px;image-rendering:pixelated}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 45%,rgba(0,0,0,0) 60%,rgba(8,30,50,.35) 100%)}
+#place{position:absolute;left:0;top:250px;height:76px;padding:0 40px 0 32px;font:700 40px/76px 'Pix';color:#fff;letter-spacing:.05em;background:rgba(36,48,64,.88);border:5px solid #fff;border-left:0;border-radius:0 14px 14px 0;transform:translateX(-120%)}
+#dlg{position:absolute;left:56px;width:968px;top:1180px;height:250px;background:#fbfbfb;border:8px solid #e6e8ec;border-radius:26px;box-shadow:0 0 0 4px #5b6068;padding:38px 52px;font:700 54px/1.32 'Pix';color:#454a52;opacity:0}
+#dlg:after{content:'';position:absolute;right:46px;bottom:26px;border:15px solid transparent;border-top:20px solid #3c3f46;border-bottom:0}
+</style></head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="__DURATION__" data-fps="30" data-width="1080" data-height="1920">
+<canvas id="c" width="270" height="480"></canvas><div id="vig"></div>
+<div id="place"></div><div id="dlg"></div>
+<script>
+const SPEC = __SPEC__;
+const W = 270, H = 480, WH = 1040;
+const cvs = document.getElementById('c'), ctx = cvs.getContext('2d'); ctx.imageSmoothingEnabled = false;
+const dlg = document.getElementById('dlg'), plc = document.getElementById('place'); plc.textContent = SPEC.place;
+let seed = 11; const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const sm = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); g.imageSmoothingEnabled = false; return [c, g]; };
+const R = (g, x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x | 0, y | 0, w | 0, h | 0); };
+const disc = (g, cx, cy, r, c) => { g.fillStyle = c; for (let dy = -r; dy <= r; dy++) { const w = Math.floor(Math.sqrt(r * r + r * .6 - dy * dy)); g.fillRect(cx - w, cy + dy, 2 * w + 1, 1); } };
+// draw something small, give it a dark 1px outline like hand-drawn sprites
+function outlined(w, h, draw, oc = '#12301f') {
+  const [a, ag] = mk(w + 4, h + 4); ag.translate(2, 2); draw(ag);
+  const [s, sg] = mk(w + 4, h + 4); sg.drawImage(a, 0, 0); sg.globalCompositeOperation = 'source-in'; R(sg, 0, 0, w + 4, h + 4, oc);
+  const [o, og] = mk(w + 4, h + 4); for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) og.drawImage(s, dx, dy); og.drawImage(a, 0, 0); return o;
+}
+const put = (g, spr, x, y) => g.drawImage(spr, (x | 0) - 2, (y | 0) - 2);
+const shadow = (g, x, y, w, h, a = .28) => { g.fillStyle = `rgba(8,44,70,${a})`; for (let dy = 0; dy < h; dy++) { const k = Math.sqrt(1 - Math.pow((dy - h / 2) / (h / 2), 2)); g.fillRect(x + w / 2 - w * k / 2, y + dy, w * k, 1); } };
+
+// ---------------------------------------------------------------- world
+const [world, wg] = mk(W, WH);
+// grass: two-tone diagonal blades, teal-leaning shadows
+R(wg, 0, 0, W, WH, '#6cc66c');
+for (let i = 0; i < 2600; i++) { const x = rnd() * W | 0, y = rnd() * WH | 0, k = rnd(); const c = k < .45 ? '#8ad878' : k < .8 ? '#52ac62' : '#a4e88c';
+  R(wg, x, y, 1, 1, c); R(wg, x + 1, y - 1, 1, 1, c); if (k > .5) R(wg, x + 2, y - 2, 1, 1, c); }
+for (let i = 0; i < 70; i++) { const x = rnd() * W | 0, y = rnd() * WH | 0; for (let b = 0; b < 3; b++) { R(wg, x + b * 3, y, 1, 3, '#3e9658'); R(wg, x + b * 3 + 1, y - 2, 1, 2, '#3e9658'); } }
+// sand path: jittered edge, pebbles
+const PATH = [[135, 880], [135, 790], [112, 730], [92, 670], [100, 610], [134, 552], [168, 490], [174, 420], [152, 362], [136, 300], [136, 200], [136, 140]];
+function strokePath(r, c, jit) { for (let i = 0; i < PATH.length - 1; i++) { const [x0, y0] = PATH[i], [x1, y1] = PATH[i + 1], n = Math.hypot(x1 - x0, y1 - y0) | 0;
+  for (let k = 0; k < n; k++) { const f = k / n; disc(wg, x0 + (x1 - x0) * f | 0, y0 + (y1 - y0) * f | 0, r + (jit ? (rnd() * 2 | 0) : 0), c); } } }
+seed = 3; strokePath(12, '#c9a46a', true); strokePath(11, '#e4cc92', true); strokePath(7, '#efdca6', false);
+for (let i = 0; i < 380; i++) { const [x0, y0] = PATH[(rnd() * (PATH.length - 1)) | 0], x = x0 + (rnd() - .5) * 20 | 0, y = y0 + (rnd() - .5) * 60 | 0; R(wg, x, y, 1, 1, rnd() < .5 ? '#cdb078' : '#fbeec0'); }
+for (let i = 0; i < 14; i++) { const [x0, y0] = PATH[(rnd() * (PATH.length - 1)) | 0]; const x = x0 + (rnd() - .5) * 12 | 0, y = y0 + (rnd() * 40) | 0; R(wg, x, y, 3, 1, '#c7a96e'); R(wg, x + 1, y + 1, 2, 1, '#d9c088'); }
+// seawall + pier + sea
+const SEA = 925;
+R(wg, 0, SEA - 20, W, 20, '#9b8f84');
+for (let y = SEA - 20; y < SEA; y += 5) for (let x = (y / 5 & 1) * 5; x < W; x += 10) { R(wg, x, y, 9, 4, '#b8ada0'); R(wg, x, y + 3, 9, 1, '#7d7268'); }
+R(wg, 0, SEA - 22, W, 3, '#d8d0c4'); R(wg, 0, SEA - 19, W, 1, '#6a5f58');
+for (let x = 4; x < W; x += 14) { R(wg, x, SEA - 30, 3, 9, '#f4f4f4'); R(wg, x, SEA - 22, 3, 1, '#9a9a9a'); } R(wg, 0, SEA - 29, W, 2, '#f4f4f4'); R(wg, 0, SEA - 27, W, 1, '#aab0b8');
+R(wg, 116, SEA - 34, 40, 18, '#7a6a52');    // opening for the pier
+for (let y = SEA - 34; y < WH; y += 4) { R(wg, 118, y, 34, 1, '#5e4a32'); }
+R(wg, 118, SEA - 34, 34, WH, 'rgba(0,0,0,0)');
+const [wat, watg] = mk(W + 16, WH - SEA);
+R(watg, 0, 0, W + 16, WH - SEA, '#2764b8');
+for (let y = 0; y < WH - SEA; y += 6) for (let x = (y / 6 & 1) * 8; x < W + 16; x += 16) { R(watg, x, y + 2, 7, 1, '#3f86d4'); R(watg, x + 2, y + 3, 4, 1, '#1c4c98'); }
+for (let x = 0; x < W + 16; x += 4) R(watg, x, 0 + (Math.sin(x * .8) * 1.5 + 2 | 0), 4, 3, '#e8f4ff');   // foam under the wall
+// objects collected to draw back-to-front
+const objs = [];
+function tree(x, y, s = 1) {
+  const spr = outlined(34, 42, (g) => {
+    R(g, 14, 30, 5, 8, '#6a4828'); R(g, 14, 30, 2, 8, '#8a6238');
+    disc(g, 17, 17, 14, '#1d6338'); disc(g, 15, 15, 12, '#2c8444'); disc(g, 12, 12, 8, '#4eaa4c');
+    for (let i = 0; i < 26; i++) { const a = rnd() * 6.28, r = rnd() * 11; const lx = 15 + Math.cos(a) * r, ly = 14 + Math.sin(a) * r; const up = (lx + ly) < 30; R(g, lx, ly, 2, 2, up ? '#8ad45a' : '#17502c'); }
+    for (let i = 0; i < 6; i++) R(g, 8 + rnd() * 10, 6 + rnd() * 8, 3, 1, '#a8e870');
+  });
+  objs.push({ y: y + 26, draw: (g) => { shadow(g, x - 10, y + 22, 26, 8); put(g, spr, x - 17, y - 14); } });
+}
+function house(x, y, w, roofA, roofB, wallC) {       // x,y = top-left of roof
+  const rw = w + 10, rh = 30, wh = 26, wx = x + 5, wy = y + rh - 4;
+  const spr = outlined(rw, rh + wh, (g) => {
+    // wall
+    R(g, 5, rh - 4, w, wh, wallC); for (let r = 0; r < wh; r += 4) { R(g, 5, rh - 4 + r + 3, w, 1, 'rgba(60,35,20,.35)'); for (let c = (r / 4 & 1) * 5; c < w; c += 10) R(g, 5 + c, rh - 4 + r, 1, 4, 'rgba(60,35,20,.28)'); }
+    R(g, 5 + w - 6, rh - 4, 6, wh, 'rgba(30,20,40,.18)'); R(g, 5, rh - 4 + wh - 3, w, 3, 'rgba(30,20,10,.3)');
+    // windows
+    for (const fx of [9, w - 19]) { R(g, fx, rh + 3, 12, 10, '#e8e0c8'); R(g, fx + 1, rh + 4, 10, 8, '#35588a'); R(g, fx + 1, rh + 4, 4, 3, '#9ad4f4'); R(g, fx + 5, rh + 4, 1, 8, '#e8e0c8'); R(g, fx - 1, rh + 13, 14, 3, '#7a4a2a'); for (let k = 0; k < 4; k++) R(g, fx + k * 3, rh + 12, 2, 2, ['#ff6f8a', '#ffd23a'][k & 1]); }
+    // door
+    const dx = (w - 10) / 2 + 5 | 0; R(g, dx - 1, rh + 2, 12, 20, '#e8e0c8'); R(g, dx, rh + 3, 10, 19, '#7a4a2a'); R(g, dx + 1, rh + 4, 8, 8, '#8f5c34'); R(g, dx + 7, rh + 13, 1, 2, '#ffd23a'); R(g, dx - 2, rh + 22, 14, 2, '#c8c0a8');
+    // roof: trapezoid, tile rows, sheared seams
+    for (let r = 0; r < rh; r++) { const inset = Math.round((rh - r) * .35); const c = ((r / 4) | 0) & 1 ? roofA : roofB;
+      R(g, inset, r, rw - 2 * inset, 1, r % 4 === 3 ? 'rgba(20,10,30,.5)' : c);
+      if (r % 4 !== 3) for (let sx = inset + ((r / 4 | 0) & 1) * 3; sx < rw - inset; sx += 6) R(g, sx, r, 1, 1, 'rgba(20,10,30,.28)'); }
+    R(g, 8, 0, rw - 16, 2, 'rgba(255,255,255,.4)'); R(g, 0, rh - 1, rw, 2, 'rgba(10,5,30,.5)');
+    R(g, rw - 12, 0, 12, rh, 'rgba(10,10,50,.12)');
+    // tiny dormer
+    if (w > 54) { R(g, rw / 2 - 7, 7, 14, 10, roofB); R(g, rw / 2 - 5, 9, 10, 6, '#35588a'); R(g, rw / 2 - 5, 9, 4, 2, '#9ad4f4'); }
+  });
+  objs.push({ y: y + rh + wh, draw: (g) => { shadow(g, x + 6, y + rh + wh - 6, w + 10, 9, .3); put(g, spr, x, y);
+    // hedge + tank beside
+    put(g, outlined(10, 16, (h) => { R(h, 0, 0, 10, 16, '#3a9a4a'); for (let k = 0; k < 16; k += 3) R(h, 0, k, 10, 1, '#58b860'); R(h, 7, 0, 3, 16, '#2a7a3a'); }), x + w + 6, y + rh + wh - 14);
+    put(g, outlined(7, 10, (h) => { R(h, 0, 0, 7, 10, '#9aa8b8'); R(h, 0, 0, 2, 10, '#c8d4e0'); R(h, 0, 4, 7, 1, '#6a7888'); }), x - 6, y + rh + wh - 12); } });
+}
+function sign(x, y) { objs.push({ y: y + 14, draw: (g) => { shadow(g, x, y + 10, 24, 6); put(g, outlined(24, 18, (h) => { R(h, 3, 8, 3, 10, '#6a4828'); R(h, 18, 8, 3, 10, '#6a4828'); R(h, 0, 0, 24, 10, '#c89a5a'); R(h, 0, 0, 24, 2, '#e4bc7a'); R(h, 3, 4, 18, 1, '#7a5a30'); R(h, 3, 6, 12, 1, '#7a5a30'); }, '#3a2410'), x, y); } }); }
+function flowers(x, y, w, h) { for (let i = 0; i < w * h / 14; i++) { const fx = x + rnd() * w | 0, fy = y + rnd() * h | 0; R(wg, fx, fy + 1, 1, 3, '#3e9658'); R(wg, fx - 1, fy, 3, 3, '#ffd23a'); R(wg, fx, fy + 1, 1, 1, '#e08a1a'); } }
+function fence(x, y, len) { objs.push({ y: y + 16, draw: (g) => { for (let i = 0; i < len; i += 8) { R(g, x + i, y, 3, 12, '#f2f2f2'); R(g, x + i + 2, y, 1, 12, '#a8b0b8'); } R(g, x, y + 3, len, 2, '#f2f2f2'); R(g, x, y + 8, len, 2, '#f2f2f2'); R(g, x, y + 5, len, 1, '#a8b0b8'); } }); }
+// layout
+house(172, 596, 52, '#2f6ad8', '#2858c0', '#b8946a');
+house(14, 740, 52, '#2f6ad8', '#2858c0', '#b8946a');
+house(30, 396, 66, '#e2723a', '#d4622a', '#c8a478');
+house(178, 300, 52, '#2f6ad8', '#2858c0', '#b8946a');
+sign(190, 160); fence(190, 112, 44); fence(26, 112, 44);
+seed = 21;
+for (let y = -10; y < WH - 90; y += 20) { tree(10 + rnd() * 6, y + rnd() * 6, 1); tree(258 - rnd() * 6, y + 10 + rnd() * 6, 1); if (y % 40 === 0) { tree(-2, y + 12, 1); tree(274, y, 1); } }
+[[44, 36], [78, 24], [214, 40], [246, 80], [30, 220], [232, 220], [236, 480], [34, 560], [220, 880], [34, 880], [80, 330], [210, 740], [58, 660], [238, 400]].forEach(([x, y]) => tree(x, y));
+flowers(10, 120, 28, 120); flowers(232, 20, 30, 100); flowers(230, 260, 26, 30);
+// tall grass patch (two sway frames)
+function tallGrass(frame) { const [c, g] = mk(116, 90); seed = 8;
+  for (let y = 0; y < 90; y += 7) for (let x = (y / 7 & 1) * 5 - 5; x < 116; x += 11) { const o = Math.sin(y * .3 + frame * 3) > 0 ? 1 : 0;
+    const spr = outlined(12, 9, (h) => { R(h, 0, 4, 12, 5, '#1f6a3c'); for (let k = 0; k < 5; k++) { R(h, k * 2 + 1, 1 + (k & 1) * 2, 2, 5, '#2f8a48'); R(h, k * 2 + 1, 1 + (k & 1) * 2, 1, 2, '#6ac068'); } }, '#0e2c1a'); g.drawImage(spr, x + o - 2, y - 2); }
+  return c; }
+const TG = [tallGrass(0), tallGrass(1)];
+const TGX = 80, TGY = 18;
+
+// characters (back view, 4-frame walk), all drawn from rects then outlined
+function person(f, coat, coatL, pants, hair, cap, pack, bob = 0) {
+  return outlined(14, 24, (g) => {
+    const step = [0, 1, 0, -1][f & 3];
+    R(g, 3, 19 + (step > 0 ? -1 : 0), 3, 4 + (step > 0 ? 0 : 0), pants); R(g, 8, 19 + (step < 0 ? -1 : 0), 3, 4, pants);
+    R(g, 2, 22 + (step > 0 ? -1 : 0), 4, 2, '#f4f4f4'); R(g, 8, 22 + (step < 0 ? -1 : 0), 4, 2, '#f4f4f4');
+    R(g, 2, 10, 10, 10, coat); R(g, 2, 10, 3, 10, coatL); R(g, 2, 18, 10, 2, 'rgba(0,0,0,.2)');
+    R(g, 0, 11 + (step < 0 ? 1 : 0), 2, 7, coat); R(g, 12, 11 + (step > 0 ? 1 : 0), 2, 7, coat); R(g, 0, 17 + (step < 0 ? 1 : 0), 2, 2, '#f2c9a0'); R(g, 12, 17 + (step > 0 ? 1 : 0), 2, 2, '#f2c9a0');
+    if (pack) { R(g, 3, 11, 8, 7, pack); R(g, 3, 11, 8, 1, 'rgba(255,255,255,.35)'); R(g, 3, 17, 8, 1, 'rgba(0,0,0,.25)'); }
+    R(g, 3, 3, 8, 8, '#f2c9a0'); R(g, 3, 5, 8, 6, hair); R(g, 3, 3, 8, 2, hair);
+    R(g, 2, 2, 10, 4, cap); R(g, 3, 1, 8, 2, cap); R(g, 3, 2, 3, 1, 'rgba(255,255,255,.4)'); R(g, 6, 3, 2, 1, '#f4f4f4');
+  });
+}
+const HERO = [0, 1, 2, 3].map((f) => person(f, '#3a4a8a', '#5668b0', '#2c3550', '#4a2e1a', '#e8e4dc', '#f0b020'));
+const NPC1 = [0, 1, 2, 3].map((f) => person(f, '#d85a7a', '#f08aa2', '#4a4058', '#8a4a22', '#6a3a1a', null));
+const NPC2 = [0, 1, 2, 3].map((f) => person(f, '#4a9a5a', '#6ac078', '#3a4a60', '#1a1a22', '#d8c050', '#e05030'));
+function fox(f) { return outlined(14, 12, (g) => { const st = [0, 1, 0, -1][f & 3];
+  R(g, 3, 9 + (st > 0 ? -1 : 0), 2, 3, '#c85a18'); R(g, 9, 9 + (st < 0 ? -1 : 0), 2, 3, '#c85a18');
+  R(g, 2, 3, 10, 8, '#f08a30'); R(g, 2, 3, 4, 8, '#ffa850'); R(g, 3, 0, 3, 4, '#f08a30'); R(g, 8, 0, 3, 4, '#f08a30'); R(g, 4, 1, 1, 2, '#3a2010'); R(g, 9, 1, 1, 2, '#3a2010');
+  R(g, 5, 10, 5, 2, '#fff2d0'); R(g, 5 + st, 8, 4, 4, '#fff2d0'); }); }
+const FOX = [0, 1, 2, 3].map(fox);
+
+// path length parametrisation
+const segs = []; let total = 0; for (let i = 1; i < PATH.length; i++) { const d = Math.hypot(PATH[i][0] - PATH[i - 1][0], PATH[i][1] - PATH[i - 1][1]); segs.push(d); total += d; }
+function along(s) { s = clamp(s, 0, total); for (let i = 0; i < segs.length; i++) { if (s <= segs[i] || i === segs.length - 1) { const k = clamp(s / segs[i], 0, 1); return [PATH[i][0] + (PATH[i + 1][0] - PATH[i][0]) * k, PATH[i][1] + (PATH[i + 1][1] - PATH[i][1]) * k]; } s -= segs[i]; } }
+const TW0 = .35, TW1 = 3.9, STOP = total - 140;
+const leaves = []; for (let i = 0; i < 16; i++) leaves.push({ x: rnd() * W, y: rnd() * H, sp: 14 + rnd() * 12, ph: rnd() * 6 });
+const sparkles = []; for (let i = 0; i < 40; i++) sparkles.push({ x: rnd() * W, y: SEA + 6 + rnd() * (WH - SEA - 6), ph: rnd() * 6 });
+objs.sort((a, b) => a.y - b.y);
+
+function renderAt(t) {
+  const s = STOP * (1 - Math.pow(1 - clamp((t - TW0) / (TW1 - TW0), 0, 1), 1.6));
+  const moving = t > TW0 && t < TW1;
+  const [hx, hy] = along(s), [fx, fy] = along(s - 17);
+  const cam = clamp(Math.round(hy - 236 - 6 * Math.sin(t * .8)), 0, WH - H);
+  const fr = moving ? ((t * 8) | 0) & 3 : 0;
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(world, 0, cam, W, H, 0, 0, W, H);
+  // animated sea
+  ctx.drawImage(wat, 0, 0, W, WH - SEA, 0, SEA - cam, W, WH - SEA);
+  { const off = (t * 6 | 0) % 16; ctx.drawImage(wat, off, 0, W, WH - SEA, 0, SEA - cam, W, WH - SEA); }
+  for (const p of sparkles) if (((t * 2 + p.ph) % 2) < .35) R(ctx, p.x, p.y - cam, 2, 1, '#fff');
+  // path-level shadows then everything sorted by depth
+  const dyn = [{ y: hy + 22, d: () => { shadow(ctx, hx - 6, hy + 14, 14, 6); put(ctx, HERO[fr], hx - 7, hy - 8 - (moving && (fr & 1) ? 1 : 0)); } },
+    { y: fy + 12, d: () => { shadow(ctx, fx - 6, fy + 3, 12, 5); put(ctx, FOX[fr], fx - 7, fy - 7 - (moving && (fr & 1) ? 1 : 0)); } },
+    { y: 560 + 22, d: () => { put(ctx, NPC1[0], 214, 566 + (Math.sin(t * 3) > .6 ? 1 : 0)); } },
+    { y: 420 + 22, d: () => { put(ctx, NPC2[0], 124, 430 + (Math.sin(t * 2.6 + 1) > .6 ? 1 : 0)); } }];
+  const all = objs.map((o) => ({ y: o.y, d: () => o.draw(ctx) })).concat(dyn).sort((a, b) => a.y - b.y);
+  ctx.save(); ctx.translate(0, -cam); for (const o of all) o.d(); ctx.restore();
+  // tall grass: drawn in front of the path end
+  ctx.drawImage(TG[((t * 3) | 0) & 1], TGX, TGY - cam);
+  // falling leaves, sun shaft, teal grade
+  for (const l of leaves) { const x = ((l.x - t * l.sp * .8 + Math.sin(t * 2 + l.ph) * 6) % W + W) % W, y = ((l.y + t * l.sp * 1.6) % (H + 20)); R(ctx, x, y, 3, 2, '#ffd83a'); R(ctx, x + 1, y + 1, 2, 1, '#e8a418'); }
+  ctx.save(); ctx.globalAlpha = .1; ctx.fillStyle = '#fff'; ctx.beginPath(); const sx = 40 + t * 6; ctx.moveTo(sx, 0); ctx.lineTo(sx + 50, 0); ctx.lineTo(sx + 130, H); ctx.lineTo(sx + 70, H); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.globalCompositeOperation = 'multiply'; R(ctx, 0, 0, W, H, '#dcecf4'); ctx.restore();
+  plc.style.transform = `translateX(${(-120 + 120 * sm(.15, .55, t)) * (t > 3.6 ? 1 - sm(3.6, 4, t) : 1)}%)`;
+  const a = SPEC.lines[0] || '', b = SPEC.lines[1] || '', t2 = 3.0;
+  dlg.style.opacity = t > .8 ? 1 : 0;
+  dlg.textContent = t < t2 ? a.slice(0, clamp(((t - .9) * 28) | 0, 0, a.length)) : b.slice(0, clamp(((t - t2) * 28) | 0, 0, b.length));
+}
+window.addEventListener('hf-seek', (e) => renderAt(e.detail.time));
+renderAt(0);
+</script></div></body></html>
