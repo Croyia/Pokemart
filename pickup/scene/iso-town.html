@@ -38,6 +38,14 @@ const MAP = SPEC.map || {
   purple: [[12, -14, 1.1], [-26, 2, 1.2], [38, -10, 1.1]]
 };
 
+// camera azimuth: of the four iso diagonals pick the one with the least tall building between the camera and the pickup, and cut down what still blocks the view
+const AZS = [Math.PI / 4, 3 * Math.PI / 4, 5 * Math.PI / 4, 7 * Math.PI / 4], EL = Math.atan(.62);
+const cen = (b) => b.poly ? [b.poly.reduce((a, p) => a + p[0], 0) / b.poly.length, b.poly.reduce((a, p) => a + p[1], 0) / b.poly.length] : [b.gable[0], b.gable[1]];
+const ext = (b) => b.poly ? Math.sqrt(Math.abs(b.poly.reduce((a, p, i) => { const q = b.poly[(i + 1) % b.poly.length]; return a + p[0] * q[1] - q[0] * p[1]; }, 0)) / 2) / 2 : Math.max(b.gable[2], b.gable[3]) / 2;
+const blocks = (az, b, h) => { const [cx, cz] = cen(b), dx = cx - MAP.pickup[0], dz = cz - MAP.pickup[1], ux = Math.cos(az), uz = Math.sin(az), along = dx * ux + dz * uz, perp = Math.abs(dx * uz - dz * ux); return along > -4 && along < 90 && perp < 9 + ext(b) ? h : 0; };
+const AZ = AZS.map((az) => [az, MAP.buildings.reduce((a, b) => a + Math.max(0, blocks(az, b, b.h) - 6), 0)]).sort((p, q) => p[1] - q[1])[0][0];
+for (const b of MAP.buildings) if (blocks(AZ, b, 1) && b.h > 6) b.h = Math.max(4, Math.min(b.h, 6));
+
 // ------------------------------------------------------------------ renderer, camera, light
 const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
 renderer.setPixelRatio(1); renderer.setSize(1080, 1920, false);
@@ -62,25 +70,30 @@ const box = (w, h, d, c, x, y, z, p) => add(new THREE.Mesh(new THREE.BoxGeometry
   const gr = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ map: t })); gr.rotation.x = -Math.PI / 2; gr.receiveShadow = true; scene.add(gr); }
 
 // ------------------------------------------------------------------ roads (ribbon), kerbs, dashed centre line
-function ribbon(pts, w, c, y, p = scene) {
+function ribbon(pts, w, c, y, p = scene, off = 0) {
   const pos = [], idx = []; let n = 0;
   for (let i = 0; i < pts.length; i++) { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let dx = b[0] - a[0], dz = b[1] - a[1]; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
-    pos.push(pts[i][0] - dz * w / 2, y, pts[i][1] + dx * w / 2, pts[i][0] + dz * w / 2, y, pts[i][1] - dx * w / 2); if (i) { idx.push(n - 2, n - 1, n, n - 1, n + 1, n); } n += 2; }
+    const ox = -dz * off, oz = dx * off; pos.push(pts[i][0] + ox - dz * w / 2, y, pts[i][1] + oz + dx * w / 2, pts[i][0] + ox + dz * w / 2, y, pts[i][1] + oz - dx * w / 2); if (i) { idx.push(n - 2, n - 1, n, n - 1, n + 1, n); } n += 2; }
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
   const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: c, side: THREE.DoubleSide })); m.receiveShadow = true; p.add(m); return m;
 }
 for (const r of MAP.roads) {
-  ribbon(r.pts, r.w + 4.4, 0xe3dfd0, .05); ribbon(r.pts, r.w + 1.2, 0xc9c5b8, .07); ribbon(r.pts, r.w, 0x3a3f50, .1);
-  for (let i = 0; i < r.pts.length - 1; i++) { const [x0, z0] = r.pts[i], [x1, z1] = r.pts[i + 1], L = Math.hypot(x1 - x0, z1 - z0), ang = Math.atan2(z1 - z0, x1 - x0);
-    for (let d = 2; d < L - 2; d += 6) { const m = box(2.6, .04, .28, 0xf4f1e6, x0 + (x1 - x0) * d / L, .13, z0 + (z1 - z0) * d / L); m.rotation.y = -ang; m.castShadow = false; } }
+  if (r.kind === 'path') { ribbon(r.pts, r.w, 0xe3dfd0, .06); continue; }
+  const full = r.hw === 'busway';
+  ribbon(r.pts, r.w + 4.4, 0xe3dfd0, .05); ribbon(r.pts, r.w + 1.2, 0xc9c5b8, .07); ribbon(r.pts, r.w, full ? 0xb8433b : 0x3a3f50, .1);
+  if (r.bus && !full) ribbon(r.pts, Math.min(3.4, r.w / 3), 0xb8433b, .11, scene, (r.busSide === 'left' ? -1 : 1) * (r.w / 2 - 1.8));   // painted bus lane on the kerb side
+  const lines = r.w >= 12 ? [-r.w / 4, 0, r.w / 4] : r.w >= 5 ? [0] : [];
+  for (let i = 0; i < r.pts.length - 1; i++) { const [x0, z0] = r.pts[i], [x1, z1] = r.pts[i + 1], L = Math.hypot(x1 - x0, z1 - z0), ang = Math.atan2(z1 - z0, x1 - x0), nx = -(z1 - z0) / (L || 1), nz = (x1 - x0) / (L || 1);
+    for (const o of lines) for (let d = 2; d < L - 2; d += 6) { const m = box(2.6, .04, .28, 0xf4f1e6, x0 + (x1 - x0) * d / L + nx * o, .13, z0 + (z1 - z0) * d / L + nz * o); m.rotation.y = -ang; m.castShadow = false; } }
 }
+for (const a of (MAP.areas || [])) { const m = slab(a.poly, .0, a.water ? .02 : .04, a.color, 1); m.castShadow = false; m.material = new THREE.MeshLambertMaterial({ color: a.color }); }
 
 // ------------------------------------------------------------------ buildings: flat slate roofs with overhang, trim, windows (or gable houses)
 function inPoly(p, poly) { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, zi] = poly[i], [xj, zj] = poly[j]; if ((zi > p[1]) !== (zj > p[1]) && p[0] < (xj - xi) * (p[1] - zi) / (zj - zi) + xi) c = !c; } return c; }
-const slab = (poly, y0, h, c, s = 1) => { const cx = poly.reduce((a, p) => a + p[0], 0) / poly.length, cz = poly.reduce((a, p) => a + p[1], 0) / poly.length;
+function slab(poly, y0, h, c, s = 1) { const cx = poly.reduce((a, p) => a + p[0], 0) / poly.length, cz = poly.reduce((a, p) => a + p[1], 0) / poly.length;
   const sh = new THREE.Shape(poly.map(([x, z]) => new THREE.Vector2(cx + (x - cx) * s, -(cz + (z - cz) * s)))); const g = new THREE.ExtrudeGeometry(sh, { depth: h, bevelEnabled: false }); g.rotateX(-Math.PI / 2);
-  const m = new THREE.Mesh(g, M(c)); m.position.y = y0; m.castShadow = m.receiveShadow = true; scene.add(m); return m; };
-const BLD = [];
+  const m = new THREE.Mesh(g, M(c)); m.position.y = y0; m.castShadow = m.receiveShadow = true; scene.add(m); return m; }
+const BLD = []; let WIN = 0;
 for (const b of MAP.buildings) {
   if (b.gable) { const [cx, cz, w, d, rot] = b.gable, g = new THREE.Group(); g.position.set(cx, 0, cz); g.rotation.y = rot; scene.add(g);
     box(w, b.h, d, b.wall, 0, b.h / 2, 0, g); box(w + .5, .35, d + .5, b.trim, 0, .17, 0, g);
@@ -90,9 +103,9 @@ for (const b of MAP.buildings) {
     box(1.6, 2.5, .12, 0xdc8a3a, 0, 1.3, d / 2 + .06, g);
     continue; }
   const p = b.poly; slab(p, 0, .6, b.trim, 1.015); slab(p, .6, b.h - .6, b.wall); slab(p, b.h, .45, b.roof, 1.1);
-  if (b.win) for (let i = 0; i < p.length; i++) { const [x0, z0] = p[i], [x1, z1] = p[(i + 1) % p.length], L = Math.hypot(x1 - x0, z1 - z0); if (L < 3.5) continue;
+  if (b.win && WIN < 900) for (let i = 0; i < p.length; i++) { const [x0, z0] = p[i], [x1, z1] = p[(i + 1) % p.length], L = Math.hypot(x1 - x0, z1 - z0); if (L < 3.5) continue;
     const dx = (x1 - x0) / L, dz = (z1 - z0) / L; let nx = dz, nz = -dx; const mid = [(x0 + x1) / 2 + nx * .2, (z0 + z1) / 2 + nz * .2]; if (inPoly(mid, p)) { nx = -nx; nz = -nz; }
-    const cnt = Math.floor(L / 3.2); for (let k = 0; k < cnt; k++) { const u = (k + .5) / cnt * L, px = x0 + dx * u + nx * .09, pz = z0 + dz * u + nz * .09; const f = new THREE.Group(); f.position.set(px, b.h * .52, pz); f.rotation.y = Math.atan2(nx, nz); scene.add(f);
+    const cnt = Math.min(14, Math.floor(L / 3.2)), rows = Math.max(1, Math.min(8, Math.floor((b.h - .8) / 3.2))); for (let rr = 0; rr < rows; rr++) for (let k = 0; k < cnt; k++) { if (++WIN > 900) break; const u = (k + .5) / cnt * L, px = x0 + dx * u + nx * .09, pz = z0 + dz * u + nz * .09; const f = new THREE.Group(); f.position.set(px, 1.9 + rr * 3.2, pz); f.rotation.y = Math.atan2(nx, nz); scene.add(f);
       box(1.7, 2.3, .06, 0xe8903c, 0, 0, 0, f); const gl = box(1.35, 1.95, .08, 0x7fbcf4, 0, 0, .03, f); gl.castShadow = false; box(.07, 1.95, .09, 0xe8903c, 0, 0, .05, f); } }
   BLD.push(b); }
 
@@ -115,12 +128,20 @@ function person(shirt, hair, sc) { const g = new THREE.Group(); const L = box(.3
   g.scale.setScalar(sc); scene.add(g); return { g, aL, aR, L, R }; }
 const hero = person(0xffd21f, 0x2a1d17, 1.35); hero.g.position.set(MAP.pickup[0], 0, MAP.pickup[1]); hero.g.rotation.y = 0.2;
 const mate = person(0xe8556a, 0x6a3a22, 1.25); mate.g.position.set(MAP.pickup[0] - 2.6, 0, MAP.pickup[1] + .2); mate.g.rotation.y = -.4;
-// car arrives at the kerb
+// the ride arrives at the kerb (a car or a bus), following the road geometry
+const VEH = MAP.vehicle || { pts: [[MAP.pickup[0] + 60, MAP.pickup[1] - 2.6], [MAP.pickup[0] + 4.6, MAP.pickup[1] - 2.6]], type: 'car' };
 const car = new THREE.Group(); scene.add(car);
-box(7.6, 1.5, 3.4, 0x3f7ff0, 0, 1.3, 0, car); box(4.2, 1.35, 3.1, 0xf4f7ff, -.3, 2.55, 0, car); box(3.4, .9, 3.15, 0x86c4f4, -.3, 2.6, 0, car);
-for (const [wx, wz] of [[-2.4, 1.7], [2.4, 1.7], [-2.4, -1.7], [2.4, -1.7]]) { const w = add(new THREE.Mesh(new THREE.CylinderGeometry(.75, .75, .5, 14), M(0x23252e)), wx, .75, wz, car); w.rotation.x = Math.PI / 2; }
-box(.3, .4, .9, 0xfff2a0, 3.85, 1.4, 1.0, car); box(.3, .4, .9, 0xfff2a0, 3.85, 1.4, -1.0, car);
-const smoke = []; for (let i = 0; i < 9; i++) { const m = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), new THREE.MeshBasicMaterial({ color: 0xf1ede6, transparent: true, opacity: .8 })); scene.add(m); smoke.push(m); }
+{ const bus = VEH.type === 'bus', Lh = bus ? 11 : 7.6, hh = bus ? 3.0 : 1.5;
+  box(Lh, hh, 3.4, bus ? 0x2f6fe0 : 0x3f7ff0, 0, hh / 2 + .6, 0, car); box(Lh - .2, .5, 3.45, bus ? 0xf4f7ff : 0x2f6fe0, 0, hh / 2 + .6, 0, car);
+  if (bus) { box(Lh - .8, .95, 3.5, 0x86c4f4, 0, hh + .0, 0, car); box(Lh - .2, .25, 3.3, 0xf4f7ff, 0, hh + .75, 0, car); }
+  else { box(4.2, 1.35, 3.1, 0xf4f7ff, -.3, 2.55, 0, car); box(3.4, .9, 3.15, 0x86c4f4, -.3, 2.6, 0, car); }
+  for (const wx of bus ? [-3.6, 3.6] : [-2.4, 2.4]) for (const wz of [1.7, -1.7]) { const w = add(new THREE.Mesh(new THREE.CylinderGeometry(.75, .75, .5, 14), M(0x23252e)), wx, .75, wz, car); w.rotation.x = Math.PI / 2; }
+  box(.3, .4, .9, 0xfff2a0, Lh / 2 + .05, 1.2, 1.0, car); box(.3, .4, .9, 0xfff2a0, Lh / 2 + .05, 1.2, -1.0, car); }
+const VL = []; let VT = 0; for (let i = 0; i < VEH.pts.length - 1; i++) { const l = Math.hypot(VEH.pts[i + 1][0] - VEH.pts[i][0], VEH.pts[i + 1][1] - VEH.pts[i][1]); VL.push(l); VT += l; }
+function vehAt(s) { s = clamp(s, 0, VT); for (let i = 0; i < VL.length; i++) { if (s <= VL[i] || i === VL.length - 1) { const k = clamp(s / (VL[i] || 1), 0, 1), a = VEH.pts[i], b = VEH.pts[i + 1]; return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, Math.atan2(b[1] - a[1], b[0] - a[0])]; } s -= VL[i]; } return [VEH.pts[0][0], VEH.pts[0][1], 0]; }
+// bus-stop shelters
+for (const [sx, sz] of (MAP.stops || [])) { const g = new THREE.Group(); g.position.set(sx, 0, sz); scene.add(g); box(3.6, .22, 1.7, 0x2f6fe0, 0, 2.5, 0, g); box(.15, 2.5, .15, 0xcfd6e2, -1.7, 1.25, -.7, g); box(.15, 2.5, .15, 0xcfd6e2, 1.7, 1.25, -.7, g); const gl = box(3.4, 1.7, .08, 0x9fd4f8, 0, 1.4, -.8, g); gl.castShadow = false; box(2.4, .12, .6, 0xe8903c, 0, .55, -.3, g); }
+const smoke = []; for (let i = 0; i < (SPEC.map ? 0 : 9); i++) { const m = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), new THREE.MeshBasicMaterial({ color: 0xf1ede6, transparent: true, opacity: .8 })); scene.add(m); smoke.push(m); }
 // pickup marker: pulsing ring + bobbing pin
 const ringM = new THREE.Mesh(new THREE.RingGeometry(1.7, 2.2, 40), new THREE.MeshBasicMaterial({ color: 0x3b8cff, transparent: true, opacity: .85, side: 2 })); ringM.rotation.x = -Math.PI / 2; ringM.position.set(MAP.pickup[0], .2, MAP.pickup[1]); scene.add(ringM);
 const ring2 = ringM.clone(); ring2.material = ringM.material.clone(); scene.add(ring2);
@@ -129,16 +150,14 @@ const pin = new THREE.Group(); pin.position.set(MAP.pickup[0], 0, MAP.pickup[1])
   const dot = new THREE.Mesh(new THREE.SphereGeometry(.45, 12, 10), new THREE.MeshBasicMaterial({ color: 0xffffff })); dot.position.set(0, 6.8, .95); pin.add(dot); }
 
 // ------------------------------------------------------------------ timeline
-const AZ = Math.PI / 4, EL = Math.atan(.62);
 function renderAt(t) {
   const P = MAP.pickup, e = sm(0, 4.8, t), V = lerp(78, 40, e), asp = 1080 / 1920;
   cam.left = -V * asp / 2; cam.right = V * asp / 2; cam.top = V / 2; cam.bottom = -V / 2; cam.updateProjectionMatrix();
-  const fx = lerp(6, P[0] + 1, e), fz = lerp(8, P[1] + 5, e), d = 120;
+  const fx = lerp(P[0] + 6, P[0] + 1, e), fz = lerp(P[1] + 10, P[1] + 5, e), d = 120;
   cam.position.set(fx + Math.cos(AZ) * Math.cos(EL) * d, Math.sin(EL) * d, fz + Math.sin(AZ) * Math.cos(EL) * d); cam.lookAt(fx, 0, fz);
   sun.target.position.set(fx, 0, fz); sun.position.set(fx - 30, 50, fz + 24); sun.target.updateMatrixWorld();
   // car glides in along the near lane and stops at the pin
-  const ct = sm(.4, 2.5, t), cx = lerp(P[0] + 60, P[0] + 4.6, ct * ct * (3 - 2 * ct) * .0 + (1 - Math.pow(1 - ct, 2.2)) ); car.position.set(cx, 0, -4.5); car.rotation.y = Math.PI; car.position.y = Math.sin(t * 30) * .02 * (1 - ct);
-  car.visible = true;
+  const ct = 1 - Math.pow(1 - sm(.4, 2.6, t), 2.2), [vx, vz, va] = vehAt(VT * ct); car.position.set(vx, Math.sin(t * 30) * .02 * (1 - ct), vz); car.rotation.y = -va;
   hero.aR.rotation.z = -2.6 + Math.sin(t * 9) * .3 * (t > 1.2 ? 1 : 0.2); hero.g.position.y = Math.abs(Math.sin(t * 4)) * .05; mate.g.position.y = Math.abs(Math.sin(t * 3 + 1)) * .04;
   const pb = Math.sin(t * 4) * .35; pin.position.y = .7 + pb; const rp = (t * .9) % 1; ringM.scale.setScalar(1 + rp * 1.2); ringM.material.opacity = .85 * (1 - rp); const rq = ((t * .9) + .5) % 1; ring2.scale.setScalar(1 + rq * 1.2); ring2.material.opacity = .85 * (1 - rq);
   smoke.forEach((m, i) => { const u = ((t * .45 + i / 9) % 1); m.position.set(-5.5 + u * 1.5, 5.2 + u * 6.5, 12 + u * 1.2); m.scale.setScalar(.5 + u * 1.5); m.material.opacity = .75 * (1 - u); });

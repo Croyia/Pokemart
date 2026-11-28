@@ -1,0 +1,77 @@
+name: Render pickup point
+
+# Fetches real OpenStreetMap data around a pickup point and renders the isometric video.
+# Run it from the Actions tab: "Render pickup point" -> "Run workflow".
+on:
+  workflow_dispatch:
+    inputs:
+      place:
+        description: 'Place to search (e.g. "SM Mall of Asia, Pasay"). Ignored if lat and lon are set.'
+        required: false
+        default: 'SM Mall of Asia, Pasay'
+      stop_name:
+        description: 'Optional bus-stop name to snap to (e.g. "Mall of Asia"). Searched within 1.5 km of the place.'
+        required: false
+        default: 'Mall of Asia'
+      lat:
+        description: 'Latitude (optional)'
+        required: false
+      lon:
+        description: 'Longitude (optional)'
+        required: false
+      radius:
+        description: 'Radius in metres around the pickup'
+        required: false
+        default: '140'
+      line1:
+        description: 'Caption 1'
+        required: false
+        default: 'your bus is'
+      line2:
+        description: 'Caption 2'
+        required: false
+        default: 'almost here'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install renderer
+        working-directory: .claude/kit
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Fetch map data and render
+        env:
+          PLACE: ${{ inputs.place }}
+          STOP: ${{ inputs.stop_name }}
+          LAT: ${{ inputs.lat }}
+          LON: ${{ inputs.lon }}
+          RADIUS: ${{ inputs.radius }}
+          L1: ${{ inputs.line1 }}
+          L2: ${{ inputs.line2 }}
+        run: |
+          args=(--radius "${RADIUS:-140}" --lines "$L1" "$L2" --out out/pickup.mp4)
+          if [ -n "$LAT" ] && [ -n "$LON" ]; then args+=(--lat "$LAT" --lon "$LON"); else args+=(--place "$PLACE"); fi
+          if [ -n "$STOP" ]; then args+=(--stop-name "$STOP"); fi
+          python3 pickup/run.py "${args[@]}"
+          # a few stills for a quick look
+          node pickup/render.mjs out/pickup.work out/pickup --stills 0.2,1.6,4.5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pickup-render
+          path: |
+            out/pickup.mp4
+            out/pickup-*.png
+            out/pickup.map.json
+            out/pickup.osm.json
