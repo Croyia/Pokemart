@@ -55,12 +55,12 @@ def find_stop(lat, lon, name, r=1500):
 def query(lat, lon, r):
     a = f'(around:{r},{lat},{lon})'
     return f'''[out:json][timeout:60];(way["highway"]{a};way["building"]{a};way["natural"~"water|coastline|wood"]{a};way["leisure"~"park|garden|pitch|playground"]{a};
-way["landuse"~"grass|forest|recreation_ground|meadow"]{a};node["natural"="tree"]{a};node["highway"="bus_stop"]{a};way["public_transport"="platform"]{a};node["public_transport"="platform"]{a};);out geom tags;'''
+way["landuse"~"grass|forest|recreation_ground|meadow|retail|commercial|residential|industrial"]{a};way["amenity"="parking"]{a};relation["building"]{a};relation["natural"="water"]{a};relation["leisure"~"park|garden"]{a};node["natural"="tree"]{a};node["highway"="bus_stop"]{a};way["public_transport"="platform"]{a};node["public_transport"="platform"]{a};);out geom tags;'''
 
 
 # ------------------------------------------------------------------ conversion
 WIDTH = {'motorway': 14, 'trunk': 13, 'primary': 11, 'secondary': 9.5, 'tertiary': 8, 'unclassified': 6.5, 'residential': 6, 'living_street': 5, 'service': 4.2, 'busway': 7, 'pedestrian': 5, 'footway': 2.4, 'path': 2, 'cycleway': 2.4, 'steps': 2}
-SKIP = {'proximity', 'construction', 'proposed', 'raceway', 'bus_guideway'}
+SKIP = {'proximity', 'construction', 'proposed', 'raceway', 'bus_guideway', 'corridor', 'elevator'}
 
 
 def project(lat0, lon0):
@@ -86,9 +86,38 @@ def seg_nearest(p, a, b):
     return math.hypot(p[0] - q[0], p[1] - q[1]), q, k
 
 
-def convert(osm, lat0, lon0, pick_ll, radius, seed=7):
+def stitch(segs):
+    """join member ways (lists of (lat,lon)) into closed rings"""
+    segs = [list(sg) for sg in segs if len(sg) > 1]; rings = []
+    while segs:
+        ring = segs.pop(0)
+        while ring[0] != ring[-1]:
+            for i, sg in enumerate(segs):
+                if sg[0] == ring[-1]: ring += sg[1:]
+                elif sg[-1] == ring[-1]: ring += sg[::-1][1:]
+                elif sg[-1] == ring[0]: ring = sg[:-1] + ring
+                elif sg[0] == ring[0]: ring = sg[::-1][:-1] + ring
+                else: continue
+                segs.pop(i); break
+            else: break
+        if ring[0] == ring[-1] and len(ring) >= 4: rings.append(ring)
+    return rings
+
+
+def expand_relations(osm):
+    out = []
+    for e in osm.get('elements', []):
+        if e['type'] != 'relation': out.append(e); continue
+        outer = [[(g['lat'], g['lon']) for g in m['geometry']] for m in e.get('members', []) if m.get('role') == 'outer' and m.get('geometry')]
+        for i, ring in enumerate(stitch(outer)):
+            out.append({'type': 'way', 'id': e['id'] * 100 + i, 'tags': e.get('tags', {}), 'geometry': [{'lat': a, 'lon': b} for a, b in ring]})
+    return {'elements': out}
+
+
+def convert(osm, lat0, lon0, pick_ll, radius, seed=7, from_stop=False):
+    osm = expand_relations(osm)
     rng = random.Random(seed); P = project(lat0, lon0); pick = P(*pick_ll)
-    roads, buildings, areas, trees, stops = [], [], [], [], []
+    roads, buildings, areas, trees, stops, canopies = [], [], [], [], [], []
     WALLS = [(0x2b3152, 0xe8903c), (0xf4e6c8, 0xd9a05a), (0xf1c75a, 0xfff2d0), (0xf2a89a, 0xfff2d0), (0xa9d0f2, 0xffffff), (0xe9ecf2, 0xc9ced8), (0x7fd0c0, 0xf4e6c8)]
     ROOFS = [0x4a4f5e, 0x2b4aa8, 0xc0503f, 0x6a4ab0, 0x4a4f5e, 0x55606e]
     for e in osm.get('elements', []):
@@ -109,6 +138,8 @@ def convert(osm, lat0, lon0, pick_ll, radius, seed=7):
             side = 'left' if (t.get('busway') == 'lane' and t.get('busway:right') in (None, 'no') and t.get('busway:left')) else 'right'
             roads.append({'pts': rdp([list(p) for p in pts], .6), 'w': round(min(w, 28), 1), 'kind': 'path' if hw in ('footway', 'path', 'cycleway', 'steps', 'pedestrian') else 'road',
                           'oneway': t.get('oneway') in ('yes', '1', 'true') or hw == 'motorway', 'rev': t.get('oneway') == '-1', 'bus': bus, 'busSide': side, 'hw': hw}); continue
+        if (t.get('building') == 'roof' or t.get('amenity') == 'shelter') and len(pts) >= 4:
+            canopies.append(rdp([list(p) for p in pts[:-1]], .5)); continue
         if 'building' in t and len(pts) >= 4:
             poly = rdp([list(p) for p in pts[:-1]], .8)
             if len(poly) < 3: continue
@@ -141,7 +172,11 @@ def convert(osm, lat0, lon0, pick_ll, radius, seed=7):
             if t.get('natural') == 'wood' or t.get('landuse') == 'forest': areas.append({'poly': poly, 'color': 0x4a9a52, 'grove': True}); continue
             if t.get('leisure') in ('park', 'garden', 'playground') or t.get('landuse') in ('grass', 'recreation_ground', 'meadow'): areas.append({'poly': poly, 'color': 0x7cc274, 'park': True}); continue
             if t.get('leisure') == 'pitch': areas.append({'poly': poly, 'color': 0xd9a26a}); continue
-            if t.get('public_transport') == 'platform': stops.append((sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly)))
+            if t.get('amenity') == 'parking': areas.append({'poly': poly, 'color': 0x9aa0ab}); continue
+            if t.get('landuse') in ('retail', 'commercial', 'industrial'): areas.append({'poly': poly, 'color': 0xd6d0c2}); continue
+            if t.get('landuse') == 'residential': areas.append({'poly': poly, 'color': 0xdad5c8}); continue
+            if t.get('public_transport') == 'platform':
+                areas.append({'poly': poly, 'color': 0xe4e7ee, 'raised': True}); stops.append((sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly)))
     road_only = [r for r in roads if r['kind'] == 'road']
     # snap the pickup to the kerb of the nearest road, and make the vehicle come along that road
     best = None
@@ -169,7 +204,7 @@ def convert(osm, lat0, lon0, pick_ll, radius, seed=7):
         for j, p in enumerate(pts):
             a2, b2 = pts[max(0, j - 1)], pts[min(len(pts) - 1, j + 1)]; dx, dz = b2[0] - a2[0], b2[1] - a2[1]; Ln = math.hypot(dx, dz) or 1
             out.append([p[0] + (-dz / Ln) * off * side_sign, p[1] + (dx / Ln) * off * side_sign])
-        vehicle = {'pts': out, 'type': 'bus' if r['bus'] or r['hw'] in ('primary', 'trunk', 'secondary', 'busway') else 'car'}
+        vehicle = {'pts': out, 'type': 'bus' if from_stop or r['bus'] or r['hw'] in ('primary', 'trunk', 'secondary', 'busway') else 'car'}
     # trees: scatter in parks / groves, away from roads and buildings
     def near_road(p, m=3):
         return any(seg_nearest(p, r['pts'][i], r['pts'][i + 1])[0] < r['w'] / 2 + m for r in road_only for i in range(len(r['pts']) - 1))
@@ -191,7 +226,8 @@ def convert(osm, lat0, lon0, pick_ll, radius, seed=7):
                 trees.append([p[0], p[1], rng.uniform(.9, 1.4)]); n -= 1
     trees = [t for t in trees if abs(t[0] - pickup[0]) < radius * 1.4 and abs(t[1] - pickup[1]) < radius * 1.4 and not near_road(t, 1.2) and not any(in_poly(t, bp) for bp in bpolys)][:140]
     purple = [t[:3] for t in trees[::9]]; trees = [t for t in trees if t not in purple]
-    return {'pickup': pickup, 'roads': roads, 'buildings': buildings, 'areas': areas, 'trees': trees, 'purple': purple, 'fences': [], 'stops': [list(s) for s in stops if math.dist(s, pickup) < radius][:12], 'vehicle': vehicle}
+    green = sum(area(a['poly']) for a in areas if a.get('park') or a.get('grove'))
+    return {'ground': 'grass' if green > 0.35 * math.pi * radius ** 2 else 'urban', 'canopies': canopies, 'real': True, 'pickup': pickup, 'roads': roads, 'buildings': buildings, 'areas': areas, 'trees': trees, 'purple': purple, 'fences': [], 'stops': [list(s) for s in stops if math.dist(s, pickup) < radius][:12], 'vehicle': vehicle}
 
 
 def main():
@@ -207,7 +243,7 @@ def main():
         if s: pick = s
     osm = json.load(open(a.from_osm)) if a.from_osm else overpass(query(pick[0], pick[1], a.radius + 30))
     if a.save_osm: Path(a.save_osm).write_text(json.dumps(osm))
-    spec = convert(osm, pick[0], pick[1], pick, a.radius)
+    spec = convert(osm, pick[0], pick[1], pick, a.radius, from_stop=bool(a.stop_name))
     spec['name'] = name; spec['center'] = list(pick)
     Path(a.out).write_text(json.dumps(spec)); print(f'wrote {a.out}: {len(spec["roads"])} roads, {len(spec["buildings"])} buildings, {len(spec["trees"])} trees, {len(spec["areas"])} areas, vehicle={bool(spec["vehicle"])}', file=sys.stderr)
 

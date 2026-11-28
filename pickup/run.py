@@ -43,7 +43,7 @@ def main():
         pick = osm.find_stop(a.lat, a.lon, a.stop_name) or pick
     data = json.load(open(a.from_osm)) if a.from_osm else osm.overpass(osm.query(pick[0], pick[1], a.radius + 30))
     (out.parent / (out.stem + '.osm.json')).write_text(json.dumps(data))
-    mp = osm.convert(data, pick[0], pick[1], pick, a.radius); mp['name'] = name
+    mp = osm.convert(data, pick[0], pick[1], pick, a.radius, from_stop=bool(a.stop_name)); mp['name'] = name
     (out.parent / (out.stem + '.map.json')).write_text(json.dumps(mp))
     spec = {'lines': a.lines, 'map': mp}; work = out.parent / (out.stem + '.work')
     prepare(ROOT / 'pickup' / 'scene' / 'iso-town.html', spec, 4.8, work)
