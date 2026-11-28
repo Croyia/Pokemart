@@ -11,7 +11,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 KIT = ROOT / '.claude' / 'kit'
 sys.path.insert(0, str(KIT)); sys.path.insert(0, str(ROOT / 'pickup'))
-import anim, osm  # noqa: E402
+import osm  # noqa: E402
+import shutil
+
+
+def prepare(template, spec, dur, work):
+    """render folder: index.html with the spec filled in, fonts and three.js (this scene needs nothing else)"""
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    data = json.dumps(spec, ensure_ascii=False).replace('</', '<\\/')
+    (work / 'index.html').write_text(Path(template).read_text().replace('__SPEC__', data).replace('__DURATION__', f'{dur:.3f}'))
+    shutil.copytree(KIT / 'fonts', work / 'fonts')
+    t = KIT / 'node_modules' / 'three'
+    (work / 'vendor' / 'three').mkdir(parents=True)
+    shutil.copy(t / 'build' / 'three.module.js', work / 'vendor' / 'three' / 'three.module.js')
+    shutil.copy(t / 'build' / 'three.core.js', work / 'vendor' / 'three' / 'three.core.js') if (t / 'build' / 'three.core.js').exists() else None
 
 
 def main():
@@ -31,7 +46,7 @@ def main():
     mp = osm.convert(data, pick[0], pick[1], pick, a.radius); mp['name'] = name
     (out.parent / (out.stem + '.map.json')).write_text(json.dumps(mp))
     spec = {'lines': a.lines, 'map': mp}; work = out.parent / (out.stem + '.work')
-    anim.prepare(ROOT / 'pickup' / 'scene' / 'iso-town.html', spec, 4.8, work, three=True)
+    prepare(ROOT / 'pickup' / 'scene' / 'iso-town.html', spec, 4.8, work)
     cmd = ['node', str(ROOT / 'pickup' / 'render.mjs'), str(work), str(out), '--frames', a.frames] + (['--stills', a.stills] if a.stills else [])
     subprocess.run(cmd, check=True, env={**__import__('os').environ, 'KIT': str(KIT)})
 
