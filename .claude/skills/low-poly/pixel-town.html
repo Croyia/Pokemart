@@ -18,7 +18,7 @@ html,body{width:1080px;height:1920px;overflow:hidden;background:#2a62b8}
 <script>
 const SPEC = __SPEC__;
 const W = 270, H = 480, WH = 1040;
-const cvs = document.getElementById('c'), ctx = cvs.getContext('2d'); ctx.imageSmoothingEnabled = false;
+const cvs = document.getElementById('c'), sx = cvs.getContext('2d'); sx.imageSmoothingEnabled = false;
 const dlg = document.getElementById('dlg'), plc = document.getElementById('place'); plc.textContent = SPEC.place;
 let seed = 11; const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -36,6 +36,7 @@ const put = (g, spr, x, y) => g.drawImage(spr, (x | 0) - 2, (y | 0) - 2);
 const shadow = (g, x, y, w, h, a = .28) => { g.fillStyle = `rgba(8,44,70,${a})`; for (let dy = 0; dy < h; dy++) { const k = Math.sqrt(1 - Math.pow((dy - h / 2) / (h / 2), 2)); g.fillRect(x + w / 2 - w * k / 2, y + dy, w * k, 1); } };
 
 // ---------------------------------------------------------------- world
+const [buf, ctx] = mk(W, H);   // the flat top-down scene; warped onto the screen below
 const [world, wg] = mk(W, WH);
 // grass: two-tone diagonal blades, teal-leaning shadows
 R(wg, 0, 0, W, WH, '#6cc66c');
@@ -169,10 +170,14 @@ function renderAt(t) {
   ctx.save(); ctx.translate(0, -cam); for (const o of all) o.d(); ctx.restore();
   // tall grass: drawn in front of the path end
   ctx.drawImage(TG[((t * 3) | 0) & 1], TGX, TGY - cam);
+  // tile perspective: far rows (top) are narrower, near rows (bottom) magnified and cropped, like the DS 3D map tilt
+  { let sy = 0; sx.clearRect(0, 0, W, H);
+    for (let y = 0; y < H; y++) { const u = y / (H - 1), step = 1.0 - 0.22 * u, sw = W * step, x0 = (W - sw) / 2; sx.drawImage(buf, x0, sy, sw, 1, 0, y, W, 1); sy += step; }
+    const g = sx.createLinearGradient(0, 0, 0, H * .5); g.addColorStop(0, 'rgba(150,200,230,.22)'); g.addColorStop(1, 'rgba(150,200,230,0)'); sx.fillStyle = g; sx.fillRect(0, 0, W, H * .5); }
   // falling leaves, sun shaft, teal grade
-  for (const l of leaves) { const x = ((l.x - t * l.sp * .8 + Math.sin(t * 2 + l.ph) * 6) % W + W) % W, y = ((l.y + t * l.sp * 1.6) % (H + 20)); R(ctx, x, y, 3, 2, '#ffd83a'); R(ctx, x + 1, y + 1, 2, 1, '#e8a418'); }
-  ctx.save(); ctx.globalAlpha = .1; ctx.fillStyle = '#fff'; ctx.beginPath(); const sx = 40 + t * 6; ctx.moveTo(sx, 0); ctx.lineTo(sx + 50, 0); ctx.lineTo(sx + 130, H); ctx.lineTo(sx + 70, H); ctx.fill(); ctx.restore();
-  ctx.save(); ctx.globalCompositeOperation = 'multiply'; R(ctx, 0, 0, W, H, '#dcecf4'); ctx.restore();
+  for (const l of leaves) { const x = ((l.x - t * l.sp * .8 + Math.sin(t * 2 + l.ph) * 6) % W + W) % W, y = ((l.y + t * l.sp * 1.6) % (H + 20)); R(sx, x, y, 3, 2, '#ffd83a'); R(sx, x + 1, y + 1, 2, 1, '#e8a418'); }
+  sx.save(); sx.globalAlpha = .1; sx.fillStyle = '#fff'; sx.beginPath(); const shx = 40 + t * 6; sx.moveTo(shx, 0); sx.lineTo(shx + 50, 0); sx.lineTo(shx + 130, H); sx.lineTo(shx + 70, H); sx.fill(); sx.restore();
+  sx.save(); sx.globalCompositeOperation = 'multiply'; R(sx, 0, 0, W, H, '#dcecf4'); sx.restore();
   plc.style.transform = `translateX(${(-120 + 120 * sm(.15, .55, t)) * (t > 3.6 ? 1 - sm(3.6, 4, t) : 1)}%)`;
   const a = SPEC.lines[0] || '', b = SPEC.lines[1] || '', t2 = 3.0;
   dlg.style.opacity = t > .8 ? 1 : 0;
