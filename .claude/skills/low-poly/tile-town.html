@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<style>
+@font-face{font-family:'Pix';src:url(fonts/PixelifySans-700-normal.woff2) format('woff2')}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1080px;height:1920px;overflow:hidden;background:#2a62b8}
+#root{position:relative;width:1080px;height:1920px;overflow:hidden}
+#c{position:absolute;left:0;top:0;width:1080px;height:1920px;image-rendering:pixelated}
+#vig{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 45%,rgba(0,0,0,0) 60%,rgba(8,30,50,.35) 100%)}
+#place{position:absolute;left:0;top:250px;height:76px;padding:0 40px 0 32px;font:700 40px/76px 'Pix';color:#fff;letter-spacing:.05em;background:rgba(36,48,64,.88);border:5px solid #fff;border-left:0;border-radius:0 14px 14px 0;transform:translateX(-120%)}
+#dlg{position:absolute;left:56px;width:968px;top:1180px;height:250px;background:#fbfbfb;border:8px solid #e6e8ec;border-radius:26px;box-shadow:0 0 0 4px #5b6068;padding:38px 52px;font:700 54px/1.32 'Pix';color:#454a52;opacity:0}
+#dlg:after{content:'';position:absolute;right:46px;bottom:26px;border:15px solid transparent;border-top:20px solid #3c3f46;border-bottom:0}
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="__DURATION__" data-fps="30" data-width="1080" data-height="1920">
+<canvas id="c" width="270" height="480"></canvas><div id="vig"></div>
+<div id="place"></div><div id="dlg"></div>
+<script type="module">
+const SPEC = __SPEC__;
+const W = 270, H = 480, TS = 32, TW = 9, TH = 33, WW = TW * TS, WH = TH * TS, XOFF = 9;
+const cvs = document.getElementById('c'), sx = cvs.getContext('2d'); sx.imageSmoothingEnabled = false;
+const dlg = document.getElementById('dlg'), plc = document.getElementById('place'); plc.textContent = SPEC.place;
+let seed = 5; const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const sm = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); g.imageSmoothingEnabled = false; return [c, g]; };
+const load = (n) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ok(null); i.src = 'assets/' + n + '.png'; });
+const names = ['village', 'tree_oak', 'tree_big', 'tree_pine', 'tree_cherry', 'fountain', 'lamp_post', 'well', 'house_small_cottage', 'house_small_stone', 'house_small_thatch', 'shop_bakery', 'inn_tavern', 'water', 'water_deep', 'ranger_woodland_male', 'farmer_homesteader_male', 'mage_apprentice_female', 'merchant_shopkeeper_male', 'slime_green'];
+const IM = {}; (await Promise.all(names.map(load))).forEach((im, i) => IM[names[i]] = im);
+const [buf, ctx] = mk(W, H);
+const [world, wg] = mk(WW, WH);
+const shadow = (g, x, y, w, h, a = .3) => { g.fillStyle = `rgba(10,40,60,${a})`; for (let dy = 0; dy < h; dy++) { const k = Math.sqrt(1 - Math.pow((dy - h / 2 + .5) / (h / 2), 2)); g.fillRect(Math.round(x + w / 2 - w * k / 2), y + dy, Math.round(w * k), 1); } };
+const tile = (g, col, row, x, y) => g.drawImage(IM.village, col * TS, row * TS, TS, TS, x, y, TS, TS);
+
+// ---- ground: grass + cobble path, joined with the pack's corner-matched transition tiles (dual grid)
+const PATH = [[144, 1000], [144, 900], [132, 830], [120, 760], [128, 690], [150, 620], [168, 560], [172, 490], [158, 430], [144, 360], [144, 260], [144, 140]];
+const dseg = (px, py) => { let best = 1e9; for (let i = 0; i < PATH.length - 1; i++) { const [x0, y0] = PATH[i], [x1, y1] = PATH[i + 1], dx = x1 - x0, dy = y1 - y0, k = clamp(((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy), 0, 1); best = Math.min(best, Math.hypot(px - (x0 + dx * k), py - (y0 + dy * k))); } return best; };
+const SEAROW = 29, PIER = [4, 4];
+const corner = (cx, cy) => cy >= SEAROW ? 0 : (dseg(cx * TS, cy * TS) < 25 ? 1 : 0);
+for (let ty = 0; ty < TH; ty++) for (let tx = 0; tx < TW; tx++) {
+  const x = tx * TS, y = ty * TS;
+  if (ty >= SEAROW) { const f = ty > SEAROW + 1 ? IM.water_deep : IM.water; wg.drawImage(f, 0, 0, TS, TS, x, y, TS, TS); continue; }
+  const idx = corner(tx, ty) * 8 + corner(tx + 1, ty) * 4 + corner(tx, ty + 1) * 2 + corner(tx + 1, ty + 1);
+  if (idx === 0) tile(wg, rnd() < .12 ? 4 + (rnd() * 4 | 0) : (rnd() * 4 | 0), 0, x, y);
+  else if (idx === 15) tile(wg, rnd() * 4 | 0, 3, x, y);
+  else tile(wg, idx % 8, 1 + (idx >> 3), x, y);
+}
+// promenade row + pier into the sea
+for (let tx = 0; tx < TW; tx++) tile(wg, rnd() * 4 | 0, 3, tx * TS, (SEAROW - 1) * TS);
+for (let ty = SEAROW; ty < SEAROW + 4; ty++) for (let tx = PIER[0]; tx <= PIER[1]; tx++) { tile(wg, rnd() * 4 | 0, 3, tx * TS, ty * TS); wg.fillStyle = 'rgba(0,0,0,.18)'; wg.fillRect(tx * TS, ty * TS, 1, TS); wg.fillRect(tx * TS + TS - 1, ty * TS, 1, TS); }
+for (let tx = 0; tx < TW; tx++) if (tx !== PIER[0]) wg.drawImage(IM.village, 5 * TS, 3 * TS, TS, TS, tx * TS, (SEAROW - 1) * TS - 20, TS, TS);   // fence along the water
+// tall grass patch where the path ends
+for (let ty = 1; ty < 4; ty++) for (let tx = 2; tx < 8; tx++) tile(wg, 5, 0, tx * TS, ty * TS);
+
+const objs = [];
+const spr = (im, x, y, w, h, base = h, sh = [0, 0]) => objs.push({ y: y + base, draw: (g) => { if (sh[0]) shadow(g, x + (w - sh[0]) / 2, y + base - sh[1] / 2 - 2, sh[0], sh[1], .22); g.drawImage(im, x, y); } });
+const house = (im, x, y) => spr(im, x, y, im.width, im.height, im.height, [im.width * .8, 10]);
+house(IM.house_small_stone, 188, 636); house(IM.house_small_cottage, 6, 456); house(IM.shop_bakery, 190, 318); house(IM.house_small_thatch, 2, 800);
+spr(IM.fountain, 188, 168, 64, 64, 60, [48, 10]); spr(IM.well, 40, 262, 32, 32, 30, [20, 6]);
+[[118, 880], [166, 740], [118, 600], [164, 380], [112, 280]].forEach(([x, y]) => spr(IM.lamp_post, x, y - 34, 32, 64, 60));
+// obstacle tiles: bush, barrel, rock as props
+const prop = (col, x, y) => objs.push({ y: y + 30, draw: (g) => g.drawImage(IM.village, col * TS, 3 * TS, TS, TS, x, y, TS, TS) });
+prop(4, 160, 706); prop(4, 100, 540); prop(7, 288 - 66, 410); prop(6, 6, 700); prop(4, 6, 360); prop(6, 240, 560); prop(4, 94, 880);
+// tree wall + scattered trees
+const TREES = [IM.tree_oak, IM.tree_big, IM.tree_oak, IM.tree_pine, IM.tree_big]; seed = 17;
+for (let y = -20, i = 0; y < SEAROW * TS - 40; y += 34, i++) { const t = TREES[i % 5], t2 = TREES[(i + 2) % 5];
+  spr(t, -20 + (rnd() * 8 | 0), y, t.width, t.height, t.height - 4, [34, 10]); spr(t2, WW - 46 - (rnd() * 8 | 0), y + 16, t2.width, t2.height, t2.height - 4, [34, 10]); }
+[[70, 90], [214, 120], [26, 232], [224, 280], [102, 470], [216, 540], [96, 760], [212, 810], [212, 470]].forEach(([x, y], i) => { const t = i % 4 === 0 ? IM.tree_cherry : TREES[i % 5]; spr(t, x, y, t.width, t.height, t.height - 4, [34, 10]); });
+objs.sort((a, b) => a.y - b.y);
+// the people must sit *between* scenery by depth, so keep a second sorted list for the near scenery
+const frameOf = (im, row, col) => [im, col * TS, row * TS];
+const person = (g, im, row, col, x, y) => { shadow(g, x - 8, y - 4, 16, 6, .3); g.drawImage(im, col * TS, row * TS, TS, TS, Math.round(x - 16), Math.round(y - 30), TS, TS); };
+const slime = (g, f, x, y) => { shadow(g, x - 8, y - 4, 16, 6, .3); g.drawImage(IM.slime_green, f * TS, TS, TS, TS, Math.round(x - 16), Math.round(y - 28), TS, TS); };
+
+const segs = []; let total = 0; for (let i = 1; i < PATH.length; i++) { const d = Math.hypot(PATH[i][0] - PATH[i - 1][0], PATH[i][1] - PATH[i - 1][1]); segs.push(d); total += d; }
+function along(s) { s = clamp(s, 0, total); for (let i = 0; i < segs.length; i++) { if (s <= segs[i] || i === segs.length - 1) { const k = clamp(s / segs[i], 0, 1); return [PATH[i][0] + (PATH[i + 1][0] - PATH[i][0]) * k, PATH[i][1] + (PATH[i + 1][1] - PATH[i][1]) * k]; } s -= segs[i]; } }
+const T0 = .35, T1 = 3.9, START = 70, STOP = total - 120;
+const leaves = []; for (let i = 0; i < 16; i++) leaves.push({ x: rnd() * W, y: rnd() * H, sp: 14 + rnd() * 12, ph: rnd() * 6 });
+
+function renderAt(t) {
+  const s = START + (STOP - START) * (1 - Math.pow(1 - clamp((t - T0) / (T1 - T0), 0, 1), 1.6));
+  const moving = t > T0 && t < T1;
+  const [hx, hy] = along(s), [fx, fy] = along(s - 22);
+  const cam = clamp(Math.round(hy - 236 - 5 * Math.sin(t * .8)), 0, WH - H);
+  const fr = moving ? ((t * 10) | 0) % 6 : 0, idle = ((t * 6) | 0) % 4;
+  ctx.clearRect(0, 0, W, H);
+  ctx.save(); ctx.translate(-XOFF, -cam);
+  ctx.drawImage(world, 0, 0);
+  // animated sea (the pack's water tiles, 4 frames)
+  const wf = ((t * 6) | 0) & 3;
+  for (let ty = SEAROW; ty < TH; ty++) for (let tx = 0; tx < TW; tx++) { if (tx === PIER[0] && ty < SEAROW + 4) continue; ctx.drawImage(ty > SEAROW + 1 ? IM.water_deep : IM.water, wf * TS, 0, TS, TS, tx * TS, ty * TS, TS, TS); }
+  // people sorted among the near scenery: draw the ones in front of / behind the lamp & trees by y
+  const people = [
+    { y: hy + 1, d: () => person(ctx, IM.ranger_woodland_male, moving ? 4 : 1, moving ? fr : idle, hx, hy) },
+    { y: fy, d: () => slime(ctx, moving ? fr % 4 : idle, fx, fy) },
+    { y: 590, d: () => person(ctx, IM.farmer_homesteader_male, 0, idle, 214, 600) },
+    { y: 430, d: () => person(ctx, IM.mage_apprentice_female, 0, idle, 134 + 0, 440) },
+    { y: 330, d: () => person(ctx, IM.merchant_shopkeeper_male, 0, idle, 232, 440) }];
+  objs.map((o) => ({ y: o.y, d: () => o.draw(ctx) })).concat(people).sort((a, b) => a.y - b.y).forEach((p) => p.d());
+  ctx.restore();
+  // tile perspective: far rows narrower, near rows magnified
+  { let sy = 0; sx.clearRect(0, 0, W, H);
+    for (let y = 0; y < H; y++) { const u = y / (H - 1), step = 1.0 - 0.22 * u, sw = W * step, x0 = (W - sw) / 2; sx.drawImage(buf, x0, sy, sw, 1, 0, y, W, 1); sy += step; }
+    const g = sx.createLinearGradient(0, 0, 0, H * .5); g.addColorStop(0, 'rgba(150,200,230,.2)'); g.addColorStop(1, 'rgba(150,200,230,0)'); sx.fillStyle = g; sx.fillRect(0, 0, W, H * .5); }
+  for (const l of leaves) { const x = ((l.x - t * l.sp * .8 + Math.sin(t * 2 + l.ph) * 6) % W + W) % W, y = ((l.y + t * l.sp * 1.6) % (H + 20)); sx.fillStyle = '#ffd83a'; sx.fillRect(x | 0, y | 0, 3, 2); sx.fillStyle = '#e8a418'; sx.fillRect((x | 0) + 1, (y | 0) + 1, 2, 1); }
+  sx.save(); sx.globalAlpha = .09; sx.fillStyle = '#fff'; sx.beginPath(); const shx = 40 + t * 6; sx.moveTo(shx, 0); sx.lineTo(shx + 50, 0); sx.lineTo(shx + 130, H); sx.lineTo(shx + 70, H); sx.fill(); sx.restore();
+  sx.save(); sx.globalCompositeOperation = 'multiply'; sx.fillStyle = '#f2f7fa'; sx.fillRect(0, 0, W, H); sx.restore();
+  sx.save(); sx.globalAlpha = .1; sx.globalCompositeOperation = 'screen'; sx.fillStyle = '#ffe9b0'; sx.fillRect(0, 0, W, H); sx.restore();
+  plc.style.transform = `translateX(${(-120 + 120 * sm(.15, .55, t)) * (t > 3.6 ? 1 - sm(3.6, 4, t) : 1)}%)`;
+  const a = SPEC.lines[0] || '', b = SPEC.lines[1] || '', t2 = 3.0;
+  dlg.style.opacity = t > .8 ? 1 : 0;
+  dlg.textContent = t < t2 ? a.slice(0, clamp(((t - .9) * 28) | 0, 0, a.length)) : b.slice(0, clamp(((t - t2) * 28) | 0, 0, b.length));
+}
+window.addEventListener('hf-seek', (e) => renderAt(e.detail.time));
+renderAt(0);
+</script></div></body></html>
