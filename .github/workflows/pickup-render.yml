@@ -82,7 +82,7 @@ jobs:
         env:
           RUN: ${{ github.run_id }}
         run: |
-          mkdir -p /tmp/pub/runs/$RUN && cp out/pickup.mp4 out/pickup-*.png out/pickup.map.json /tmp/pub/runs/$RUN/
+          mkdir -p /tmp/pub/runs/$RUN && cp out/pickup.mp4 out/pickup-*.png out/pickup.map.json out/pickup.osm.json /tmp/pub/runs/$RUN/
           git config user.name "pickup-render[bot]"; git config user.email "actions@users.noreply.github.com"
           if git ls-remote --exit-code --heads origin pickup-renders >/dev/null 2>&1; then git fetch origin pickup-renders && git checkout -B pickup-renders origin/pickup-renders; else git checkout --orphan pickup-renders && git rm -rf . >/dev/null 2>&1 || true; fi
           mkdir -p runs && cp -r /tmp/pub/runs/$RUN runs/
